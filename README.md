@@ -115,3 +115,33 @@ Swiss federal health data is inconsistent:
 - Values and enums are not standardized
 
 This pipeline ensures all years conform to a unified schema for further processing.
+
+---
+
+## 📅 Adding a new premium year to production (RomandeAssure)
+
+The production database (`lamal-db` on frontier) is **not** rebuilt with
+`CreateAndImportData.sql` (that script drops every table, and its datadir is an anonymous
+Docker volume: never `docker compose down` it). A new year is **added** with
+`datasets/Lamal/build/utils/import_year.py`, in one transaction, CH + EU together:
+
+```bash
+# on frontier (Python 3.6 + pymysql), once the FOPH has published the year (end of September)
+set -a; . /etc/romandeassure/lamal-comparator-api/.env; set +a
+python3 import_year.py --year 2028 --regions praemienregionen.xlsx            # dry-run report
+python3 import_year.py --year 2028 --regions praemienregionen.xlsx --apply    # write
+```
+
+- `praemienregionen.xlsx` = the premium regions of the year (priminfo «Téléchargements»);
+  the script only updates communes whose region changed.
+- The report fails on any unknown code. The FOPH changed every code for 2027
+  (`AKA_03_ERW`, `MIT_UNF`, `PR_REG_1`, `FRA_01_E_0300`, `P_OKPCH`, bare ISO codes in the
+  EU file); both encodings are handled, here and in `prime.py`.
+- The comparator API resolves `year=latest` as a global `MAX(year)` on every request:
+  the site switches as soon as the transaction commits. Rollback:
+  `DELETE FROM lamal WHERE year=<year>`.
+- Then: bump the CO₂ redistribution table and `LATEST_PREMIUM_YEAR` in
+  `romandeassure-widget-lamal-comparator/src/app/flow.js` (FOEN notice, published end of August).
+
+2027 was loaded on 2026-09-29 (219 916 CH + 2 230 EU rows). Normalising the official 2026
+file with the same code reproduces the 219 702 production rows of 2026 exactly.

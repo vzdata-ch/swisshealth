@@ -7,6 +7,25 @@ set -a
 source "$script_dir/../.dataset.env"
 set +a
 
+# ========= CSV -> ";" =========
+# Los CSV de primas ≥2027 van separados por comas, con BOM y con campos entre comillas
+# que contienen comas (Tarifbezeichnung). Un `sed 's/,/;/g'` los rompería: se
+# reescriben con el módulo csv (y sin BOM) al separador ";" que espera process.py.
+to_semicolon() {
+  python3 - "$1" "$2" <<'PY'
+import csv, os, sys
+src, dst = sys.argv[1], sys.argv[2]
+with open(src, newline="", encoding="utf-8-sig") as f:
+    head = f.readline(); f.seek(0)
+    delim = ";" if head.count(";") > 3 else ","
+    rows = list(csv.reader(f, delimiter=delim))
+tmp = dst + ".part"
+with open(tmp, "w", newline="", encoding="utf-8") as g:
+    csv.writer(g, delimiter=";").writerows(rows)
+os.replace(tmp, dst)
+PY
+}
+
 # ========= PARSE ARCHIVES =========
 declare -A files
 IFS=';' read -ra entries <<< "${DATASET_ARCHIVES:-}"
@@ -93,12 +112,8 @@ for zipfile in *.zip; do
       cp "$csvfile" "$tmpfile"
     fi
 
-    if head -n 1 "$tmpfile" | grep -q ";"; then
-      mv "$tmpfile" "$csvfile"
-    else
-      sed 's/,/;/g' "$tmpfile" > "$csvfile"
-      rm -f "$tmpfile"
-    fi
+    to_semicolon "$tmpfile" "$csvfile"
+    rm -f "$tmpfile"
   done
 done
 
@@ -132,11 +147,7 @@ for type in CH EU; do
     cp "$tmp_file" "$target_file"
   fi
 
-  if head -n 1 "$target_file" | grep -q ";"; then
-    :
-  else
-    sed -i 's/,/;/g' "$target_file"
-  fi
+  to_semicolon "$target_file" "$target_file"
 
   rm -f "$tmp_file"
 done
@@ -172,12 +183,8 @@ while IFS= read -r year; do
       cp "$src" "$tmp"
     fi
 
-    if head -n 1 "$tmp" | grep -q ";"; then
-      mv "$tmp" "$dst"
-    else
-      sed 's/,/;/g' "$tmp" > "$dst"
-      rm -f "$tmp"
-    fi
+    to_semicolon "$tmp" "$dst"
+    rm -f "$tmp"
 
   done
 

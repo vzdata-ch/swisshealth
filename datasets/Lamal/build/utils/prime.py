@@ -66,6 +66,10 @@ class Prime:
             },
             inplace=True,
         )
+        # Desde 2027: FRA_01_E_0300 ... FRA_06_E_2500, FRA_01_K_0000 ... (J/K análogos)
+        df["Franchise"] = df["Franchise"].astype(str).str.replace(
+            r"^FRA_\d+_[EJK]_0*(\d+)$", r"\1", regex=True
+        )
 
     def __cleanUnfalleinschluss(df):
         df.replace(
@@ -75,6 +79,8 @@ class Prime:
                     "06": "0",
                     "MIT-UNF": "1",
                     "OHN-UNF": "0",
+                    "MIT_UNF": "1",
+                    "OHN_UNF": "0",
                 }
             },
             inplace=True,
@@ -90,6 +96,9 @@ class Prime:
                     "AKL-KIN": "KIN",
                     "AKL-JUG": "JUG",
                     "AKL-ERW": "ERW",
+                    "AKA_01_KIN": "KIN",
+                    "AKA_02_JUG": "JUG",
+                    "AKA_03_ERW": "ERW",
                 }
             },
             inplace=True,
@@ -107,6 +116,10 @@ class Prime:
                     "PR-REG EU1": "1",
                     "PR-REG EU2": "2",
                     "PR-REG EU3": "3",
+                    "PR_REG_0": "0",
+                    "PR_REG_1": "1",
+                    "PR_REG_2": "2",
+                    "PR_REG_3": "3",
                 }
             },
             inplace=True,
@@ -228,6 +241,13 @@ class Prime:
                 df.insert(2, "Hoheitsgebiet", "EU")
         Prime.__renCol(df, "C_GRP", "Hoheitsgebiet")
         Prime.__checkCol(df, "Hoheitsgebiet")
+        # Desde 2027 la OFSP codifica P_OKPCH / P_OKPEU (la columna pays es VARCHAR(2))
+        df.replace({"Hoheitsgebiet": {"P_OKPCH": "CH", "P_OKPEU": "EU"}}, inplace=True)
+        # Desde 2027 el CSV EU trae el código ISO desnudo ("AT"): la BD guarda "EU AT".
+        # Sin prefijo, AT/BE/FR/GR/LU se confundirían con los cantones BE/FR/GR/LU.
+        if not isCH:
+            kant = df["Kanton"].astype(str)
+            df["Kanton"] = kant.where(kant.str.startswith("EU "), "EU " + kant)
         # 0,1,2,3
         Prime.__renCol(df, "R_ID", "Region")
         Prime.__checkCol(df, "Region")
@@ -316,7 +336,25 @@ class Prime:
             },
             inplace=True,
         )
+        # Desde 2027: BASE / PRAXIS / FLEX / TEL_DIG / PHARM. La BD conserva las clases
+        # históricas: PRAXIS -> TAR-HMO si el nombre dice HMO/Gesundheitspraxis, si no
+        # TAR-HAM; FLEX / TEL_DIG / PHARM -> TAR-DIV. (import_year.py además conserva
+        # la clase del año anterior para la misma tarifa; la API no usa esta columna.)
+        if df["Tariftyp"].isin(["PRAXIS", "FLEX", "TEL_DIG", "PHARM"]).any():
+            names = (df.get("Tarif", "").astype(str) + " " + df.get("Tarifbezeichnung", "").astype(str))
+            is_hmo = names.str.contains("HMO|GESUNDHEITSPRAXIS", case=False, regex=True)
+            praxis = df["Tariftyp"] == "PRAXIS"
+            df.loc[praxis & is_hmo, "Tariftyp"] = "TAR-HMO"
+            df.loc[praxis & ~is_hmo, "Tariftyp"] = "TAR-HAM"
+            df.loc[df["Tariftyp"].isin(["FLEX", "TEL_DIG", "PHARM"]), "Tariftyp"] = "TAR-DIV"
         Prime.__checkCol(df, "Tariftyp")
+        if isCH:
+            # En la BD, isBaseP=1 SOLO para la tarifa BASE con accidente (así viene hasta
+            # 2026); desde 2027 la OFSP lo marca también sin accidente.
+            df["isBaseP"] = ((df["Tariftyp"] == "TAR-BASE")
+                             & (df["Unfalleinschluss"].astype(str) == "1")).astype(int)
+            base_desc = (df["Tariftyp"] == "TAR-BASE") & (df["Tarifbezeichnung"] == "BASE")
+            df.loc[base_desc, "Tarifbezeichnung"] = "Grundversicherung"
 
         # display(df)
         if (df.get("Tarif")) is None:
